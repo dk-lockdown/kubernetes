@@ -3,10 +3,10 @@ name: Go
 on:
   push:
     branches: [ master ]
-    tags: v1.18.2
+    #tags: v1.18.2
   pull_request:
     branches: [ master ]
-    tags: v1.18.2  
+    #tags: v1.18.2  
 
 jobs:
 
