@@ -36,6 +36,12 @@ jobs:
     - name: get
       run: find . -name kubeadm
       
+    - name: package
+      run: cp ./_output/local/bin/linux/amd64/kubeadm staging
+    - uses: actions/upload-artifact@v1
+      with:
+        name: Package
+        path: staging
     #- name: Copy file
     #  run: mkdir staging && cp _output/local/bin/linux/amd64/kubeadm staging
     #- name: Test
