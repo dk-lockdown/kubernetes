@@ -47,7 +47,7 @@ jobs:
       run: find . -name kubeadm
       
     - name: Package
-      run: mkdir myki && ./_output/local/bin/linux/amd64/kubeadm myki
+      run: mkdir myki && cp ./_output/local/bin/linux/amd64/kubeadm myki
       
     - uses: actions/upload-artifact@v1
       with:
