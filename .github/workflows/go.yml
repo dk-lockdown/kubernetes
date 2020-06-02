@@ -32,8 +32,11 @@ jobs:
 
     - name: Build
       run: make all WHAT=cmd/kubeadm GOFLAGS=-v
+
+    - name: get
+      run: find . -name kubeadm
       
-    - name: Copy file
-      run: mkdir staging && cp _output/local/bin/linux/amd64/kubeadm staging
+    #- name: Copy file
+    #  run: mkdir staging && cp _output/local/bin/linux/amd64/kubeadm staging
     #- name: Test
       #run: go test -v .
