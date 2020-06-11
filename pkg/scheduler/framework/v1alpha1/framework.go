@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
 	"k8s.io/kube-scheduler/config/v1beta1"
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
@@ -44,6 +45,7 @@ const (
 	preFilter                                 = "PreFilter"
 	preFilterExtensionAddPod                  = "PreFilterExtensionAddPod"
 	preFilterExtensionRemovePod               = "PreFilterExtensionRemovePod"
+	postFilter                                = "PostFilter"
 	preScore                                  = "PreScore"
 	score                                     = "Score"
 	scoreExtensionNormalize                   = "ScoreExtensionNormalize"
@@ -67,6 +69,7 @@ type framework struct {
 	queueSortPlugins      []QueueSortPlugin
 	preFilterPlugins      []PreFilterPlugin
 	filterPlugins         []FilterPlugin
+	postFilterPlugins     []PostFilterPlugin
 	preScorePlugins       []PreScorePlugin
 	scorePlugins          []ScorePlugin
 	reservePlugins        []ReservePlugin
@@ -77,6 +80,7 @@ type framework struct {
 	permitPlugins         []PermitPlugin
 
 	clientSet       clientset.Interface
+	eventRecorder   events.EventRecorder
 	informerFactory informers.SharedInformerFactory
 
 	metricsRecorder *metricsRecorder
@@ -103,6 +107,7 @@ func (f *framework) getExtensionPoints(plugins *config.Plugins) []extensionPoint
 	return []extensionPoint{
 		{plugins.PreFilter, &f.preFilterPlugins},
 		{plugins.Filter, &f.filterPlugins},
+		{plugins.PostFilter, &f.postFilterPlugins},
 		{plugins.Reserve, &f.reservePlugins},
 		{plugins.PreScore, &f.preScorePlugins},
 		{plugins.Score, &f.scorePlugins},
@@ -117,6 +122,7 @@ func (f *framework) getExtensionPoints(plugins *config.Plugins) []extensionPoint
 
 type frameworkOptions struct {
 	clientSet            clientset.Interface
+	eventRecorder        events.EventRecorder
 	informerFactory      informers.SharedInformerFactory
 	snapshotSharedLister SharedLister
 	metricsRecorder      *metricsRecorder
@@ -132,6 +138,13 @@ type Option func(*frameworkOptions)
 func WithClientSet(clientSet clientset.Interface) Option {
 	return func(o *frameworkOptions) {
 		o.clientSet = clientSet
+	}
+}
+
+// WithEventRecorder sets clientSet for the scheduling framework.
+func WithEventRecorder(recorder events.EventRecorder) Option {
+	return func(o *frameworkOptions) {
+		o.eventRecorder = recorder
 	}
 }
 
@@ -211,6 +224,7 @@ func NewFramework(r Registry, plugins *config.Plugins, args []config.PluginConfi
 		pluginNameToWeightMap: make(map[string]int),
 		waitingPods:           newWaitingPodsMap(),
 		clientSet:             options.clientSet,
+		eventRecorder:         options.eventRecorder,
 		informerFactory:       options.informerFactory,
 		metricsRecorder:       options.metricsRecorder,
 		runAllFilters:         options.runAllFilters,
@@ -506,6 +520,33 @@ func (f *framework) runFilterPlugin(ctx context.Context, pl FilterPlugin, state 
 	status := pl.Filter(ctx, state, pod, nodeInfo)
 	f.metricsRecorder.observePluginDurationAsync(Filter, pl.Name(), status, metrics.SinceInSeconds(startTime))
 	return status
+}
+
+// RunPostFilterPlugins runs the set of configured PostFilter plugins until the first
+// Success or Error is met, otherwise continues to execute all plugins.
+func (f *framework) RunPostFilterPlugins(ctx context.Context, state *CycleState, pod *v1.Pod, filteredNodeStatusMap NodeToStatusMap) (*PostFilterResult, *Status) {
+	statuses := make(PluginToStatus)
+	for _, pl := range f.postFilterPlugins {
+		r, s := f.runPostFilterPlugin(ctx, pl, state, pod, filteredNodeStatusMap)
+		if s.IsSuccess() {
+			return r, s
+		} else if !s.IsUnschedulable() {
+			// Any status other than Success or Unschedulable is Error.
+			return nil, NewStatus(Error, s.Message())
+		}
+		statuses[pl.Name()] = s
+	}
+	return nil, statuses.Merge()
+}
+
+func (f *framework) runPostFilterPlugin(ctx context.Context, pl PostFilterPlugin, state *CycleState, pod *v1.Pod, filteredNodeStatusMap NodeToStatusMap) (*PostFilterResult, *Status) {
+	if !state.ShouldRecordPluginMetrics() {
+		return pl.PostFilter(ctx, state, pod, filteredNodeStatusMap)
+	}
+	startTime := time.Now()
+	r, s := pl.PostFilter(ctx, state, pod, filteredNodeStatusMap)
+	f.metricsRecorder.observePluginDurationAsync(postFilter, pl.Name(), s, metrics.SinceInSeconds(startTime))
+	return r, s
 }
 
 // RunPreScorePlugins runs the set of configured pre-score plugins. If any
@@ -932,6 +973,11 @@ func (f *framework) ClientSet() clientset.Interface {
 	return f.clientSet
 }
 
+// EventRecorder returns an event recorder.
+func (f *framework) EventRecorder() events.EventRecorder {
+	return f.eventRecorder
+}
+
 // SharedInformerFactory returns a shared informer factory.
 func (f *framework) SharedInformerFactory() informers.SharedInformerFactory {
 	return f.informerFactory
@@ -956,4 +1002,9 @@ func (f *framework) pluginsNeeded(plugins *config.Plugins) map[string]config.Plu
 		find(e.plugins)
 	}
 	return pgMap
+}
+
+// PreemptHandle returns the internal preemptHandle object.
+func (f *framework) PreemptHandle() PreemptHandle {
+	return f.preemptHandle
 }

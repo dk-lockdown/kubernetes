@@ -311,12 +311,12 @@ profiles:
 			obj, gvk, err := decoder.Decode(tt.data, nil, nil)
 			if err != nil {
 				if tt.wantErr != err.Error() {
-					t.Fatalf("got err %w, want %w", err, tt.wantErr)
+					t.Fatalf("got err %v, want %v", err.Error(), tt.wantErr)
 				}
 				return
 			}
 			if len(tt.wantErr) != 0 {
-				t.Fatal("no error produced, wanted %w", tt.wantErr)
+				t.Fatalf("no error produced, wanted %v", tt.wantErr)
 			}
 			got, ok := obj.(*config.KubeSchedulerConfiguration)
 			if !ok {
@@ -478,7 +478,6 @@ profiles:
 				},
 			},
 			want: `apiVersion: kubescheduler.config.k8s.io/v1beta1
-bindTimeoutSeconds: 0
 clientConnection:
   acceptContentTypes: ""
   burst: 0
