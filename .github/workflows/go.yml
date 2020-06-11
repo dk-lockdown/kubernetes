@@ -29,6 +29,11 @@ jobs:
         sed -i "s/365/365 * 99/" /home/runner/work/kubernetes/kubernetes/cmd/kubeadm/app/constants/constants.go
         sed -i "s/10)/99)/"  /home/runner/work/kubernetes/kubernetes/staging/src/k8s.io/client-go/util/cert/cert.go
 
+    - name: Get Env
+      run: |
+        find . -name constants.go |xargs cat |grep 365
+        find . -name cert.go |xargs cat |grep 365d
+
     #- name: github
     #  run: git clone --branch v1.18.2 https://github.com/kubernetes/kubernetes.git
 
