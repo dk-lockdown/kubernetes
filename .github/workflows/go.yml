@@ -20,14 +20,14 @@ jobs:
       id: go
 
    - name: Set GitHub Env
-     env: 
-       Kubeadm-VERSION: v1.18.3
-     run: echo "v1.18.3"
+     env:
+       my_env_var: v1.18.3
+#     run: echo "v1.18.3"
     
     - name: Check out code into the Go module directory
       uses: actions/checkout@v2
       with:
-        ref: %{{ Kubeadm-VERSION }}
+        ref: %{{ my_env_var }}
 
 #     - name: Sed Env
 #       run: |
