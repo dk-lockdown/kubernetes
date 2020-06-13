@@ -22,7 +22,7 @@ jobs:
     - name: Dump GitHub context
       #env:
       #  KUBEADM_VERSION: v1.18.2
-      run: echo "::set-env name=packageName::v1.18.2"
+      run: echo "::set-env name=packageName::v1.18.3"
     
     - name: Get Env
       run: echo '${{ env.packageName }}'
@@ -32,10 +32,10 @@ jobs:
       with:
         ref: ${{ env.packageName }}
          
-#     - name: Sed Env
-#       run: |
-#         sed -i "s/365/365 * 99/" /home/runner/work/kubernetes/kubernetes/cmd/kubeadm/app/constants/constants.go
-#         sed -i "s/10)/99)/"  /home/runner/work/kubernetes/kubernetes/staging/src/k8s.io/client-go/util/cert/cert.go
+    - name: Sed Env
+      run: |
+        sed -i "s/365/365 * 99/" /home/runner/work/kubernetes/kubernetes/cmd/kubeadm/app/constants/constants.go
+        sed -i "s/10)/99)/"  /home/runner/work/kubernetes/kubernetes/staging/src/k8s.io/client-go/util/cert/cert.go
 
 #     - name: Get Env
 #       run: |
