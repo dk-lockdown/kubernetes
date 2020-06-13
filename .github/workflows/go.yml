@@ -21,15 +21,16 @@ jobs:
 
     - name: Dump GitHub context
       env:
-        GITHUB_CONTEXT: v1.18.2
+        KUBEADM_VERSION: v1.18.2
       run: echo "$GITHUB_CONTEXT"
     
-#     - name: Get Env
-#       run: echo ${{ GITHUB_CONTEXT }}
-     - name: Check out code into the Go module directory
-       uses: actions/checkout@v2
-       with:
-         ref: ${env:GITHUB_CONTEXT}
+     - name: Get Env
+       run: echo ${{ env.KUBEADM_VERSION }}
+       
+#      - name: Check out code into the Go module directory
+#        uses: actions/checkout@v2
+#        with:
+#          ref: ${{ env.KUBEADM_VERSION }}
          
 #     - name: Sed Env
 #       run: |
