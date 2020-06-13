@@ -24,8 +24,8 @@ jobs:
         GITHUB_CONTEXT: 1.1
       run: echo "$GITHUB_CONTEXT"
     
-#   - name: Get Env
-#     run: echo ${{ my_env_var }}
+   - name: Get Env
+     run: echo ${{ GITHUB_CONTEXT }}
 #     - name: Check out code into the Go module directory
 #       uses: actions/checkout@v2
 #       with:
