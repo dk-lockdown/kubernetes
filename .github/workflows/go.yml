@@ -29,8 +29,8 @@ jobs:
      - name: Check out code into the Go module directory
        uses: actions/checkout@v2
        with:
-         ref: ${{ GITHUB_CONTEXT }}
-
+         ref: ${env:GITHUB_CONTEXT}
+         
 #     - name: Sed Env
 #       run: |
 #         sed -i "s/365/365 * 99/" /home/runner/work/kubernetes/kubernetes/cmd/kubeadm/app/constants/constants.go
