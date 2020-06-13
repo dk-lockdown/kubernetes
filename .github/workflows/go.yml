@@ -19,12 +19,13 @@ jobs:
         go-version: ^1.14
       id: go
 
-   - name: Set GitHub Env
-     env:
-       my_env_var: v1.18.3
+    - name: Dump GitHub context
+      env:
+        GITHUB_CONTEXT: ${{ toJson(github) }}
+      run: echo "$GITHUB_CONTEXT"
     
-   - name: Get Env
-     run: echo ${{ my_env_var }}
+#   - name: Get Env
+#     run: echo ${{ my_env_var }}
 #     - name: Check out code into the Go module directory
 #       uses: actions/checkout@v2
 #       with:
