@@ -20,12 +20,12 @@ jobs:
 #       id: go
 
     - name: Dump GitHub context
-      env:
-        KUBEADM_VERSION: v1.18.2
-      run: echo ${{ env.KUBEADM_VERSION }}
+      #env:
+      #  KUBEADM_VERSION: v1.18.2
+      run: echo "::set-env name=action_state::v1.18.2"
     
      - name: Get Env
-       run: echo ${{ env.KUBEADM_VERSION }}
+       run: echo ${{ action_state }}
        
 #      - name: Check out code into the Go module directory
 #        uses: actions/checkout@v2
