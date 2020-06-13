@@ -74,7 +74,7 @@ jobs:
 
     - uses: actions/upload-artifact@v1
       with:
-        name: kubeadm-v1.18.3
+        name: kubeadm-${{ env.packageName }}
         path: myki
 #     #- name: Copy file
 #     #  run: mkdir staging && cp _output/local/bin/linux/amd64/kubeadm staging
