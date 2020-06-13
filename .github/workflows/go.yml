@@ -24,8 +24,8 @@ jobs:
       #  KUBEADM_VERSION: v1.18.2
       run: echo "::set-env name=packageName::MYKI"
     
-     - name: Get Env
-       run: echo '${{ env.packageName }}'
+    - name: Get Env
+      run: echo '${{ env.packageName }}'
        
 #      - name: Check out code into the Go module directory
 #        uses: actions/checkout@v2
