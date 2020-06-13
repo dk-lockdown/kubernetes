@@ -13,19 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-    - name: Set up Go 1.x
-      uses: actions/setup-go@v2
-      with:
-        go-version: ^1.14
-      id: go
+#     - name: Set up Go 1.x
+#       uses: actions/setup-go@v2
+#       with:
+#         go-version: ^1.14
+#       id: go
 
     - name: Dump GitHub context
       env:
-        GITHUB_CONTEXT: 1.1
+        GITHUB_CONTEXT: v1.18.2
       run: echo "$GITHUB_CONTEXT"
     
     - name: Get Env
-      run: echo "$GITHUB_CONTEXT"
+      run: echo ${{ GITHUB_CONTEXT }}
 #     - name: Check out code into the Go module directory
 #       uses: actions/checkout@v2
 #       with:
