@@ -61,13 +61,13 @@ jobs:
         chmod +x ./_output/local/bin/linux/amd64/kubeadm
         ./_output/local/bin/linux/amd64/kubeadm version
 
-    #- name: Package
-    #  run: mkdir myki && cp ./_output/local/bin/linux/amd64/kubeadm myki
+    - name: Package
+      run: mkdir myki && cp ./_output/local/bin/linux/amd64/kubeadm myki
 
-    #- uses: actions/upload-artifact@v1
-    #  with:
-    #    name: kubeadm-v1.18.3
-    #    path: myki
+    - uses: actions/upload-artifact@v1
+      with:
+        name: kubeadm-v1.18.3
+        path: myki
     #- name: Copy file
     #  run: mkdir staging && cp _output/local/bin/linux/amd64/kubeadm staging
     #- name: Test
