@@ -22,7 +22,7 @@ jobs:
     - name: Dump GitHub context
       env:
         KUBEADM_VERSION: v1.18.2
-      run: echo "$GITHUB_CONTEXT"
+      run: echo ${{ env.KUBEADM_VERSION }}
     
      - name: Get Env
        run: echo ${{ env.KUBEADM_VERSION }}
