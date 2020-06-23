@@ -76,6 +76,7 @@ jobs:
       with:
         name: kubeadm-${{ env.packageName }}
         path: myki
+
 #     #- name: Copy file
 #     #  run: mkdir staging && cp _output/local/bin/linux/amd64/kubeadm staging
 #     #- name: Test
