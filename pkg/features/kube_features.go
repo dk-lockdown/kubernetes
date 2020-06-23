@@ -410,6 +410,19 @@ const (
 	// Expects Azure File CSI Driver to be installed and configured on all nodes.
 	CSIMigrationAzureFileComplete featuregate.Feature = "CSIMigrationAzureFileComplete"
 
+	// owner: @divyenpatel
+	// alpha: v1.19
+	//
+	// Enables the vSphere in-tree driver to vSphere CSI Driver migration feature.
+	CSIMigrationvSphere featuregate.Feature = "CSIMigrationvSphere"
+
+	// owner: @divyenpatel
+	// alpha: v1.19
+	//
+	// Disables the vSphere in-tree driver.
+	// Expects vSphere CSI Driver to be installed and configured on all nodes.
+	CSIMigrationvSphereComplete featuregate.Feature = "CSIMigrationvSphereComplete"
+
 	// owner: @gnufied
 	// alpha: v1.18
 	// Allows user to configure volume permission change policy for fsGroups when mounting
@@ -555,12 +568,14 @@ const (
 
 	// owner: @robscott
 	// beta: v1.18
+	// ga: v1.19
 	//
 	// Enables DefaultIngressClass admission controller.
 	DefaultIngressClass featuregate.Feature = "DefaultIngressClass"
 
 	// owner: @bart0sh
 	// alpha: v1.18
+	// beta: v1.19
 	//
 	// Enables usage of HugePages-<size> in a volume medium,
 	// e.g. emptyDir:
@@ -579,6 +594,13 @@ const (
 	//
 	// Enables usage of any object for volume data source in PVCs
 	AnyVolumeDataSource featuregate.Feature = "AnyVolumeDataSource"
+
+	// owner: @javidiaz
+	// alpha: v1.19
+	//
+	// Allow setting the Fully Qualified Domain Name (FQDN) in the hostname of a Pod. If a Pod does not
+	// have FQDN, this feature has no effect.
+	SetHostnameAsFQDN featuregate.Feature = "SetHostnameAsFQDN"
 )
 
 func init() {
@@ -631,6 +653,8 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	CSIMigrationAzureDiskComplete:  {Default: false, PreRelease: featuregate.Alpha},
 	CSIMigrationAzureFile:          {Default: false, PreRelease: featuregate.Alpha},
 	CSIMigrationAzureFileComplete:  {Default: false, PreRelease: featuregate.Alpha},
+	CSIMigrationvSphere:            {Default: false, PreRelease: featuregate.Alpha},
+	CSIMigrationvSphereComplete:    {Default: false, PreRelease: featuregate.Alpha},
 	RunAsGroup:                     {Default: true, PreRelease: featuregate.Beta},
 	CSIMigrationOpenStack:          {Default: false, PreRelease: featuregate.Beta}, // Off by default (requires OpenStack Cinder CSI driver)
 	CSIMigrationOpenStackComplete:  {Default: false, PreRelease: featuregate.Alpha},
@@ -641,7 +665,7 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	CSIInlineVolume:                {Default: true, PreRelease: featuregate.Beta},
 	RuntimeClass:                   {Default: true, PreRelease: featuregate.Beta},
 	NodeLease:                      {Default: true, PreRelease: featuregate.GA, LockToDefault: true},
-	SCTPSupport:                    {Default: false, PreRelease: featuregate.Alpha},
+	SCTPSupport:                    {Default: true, PreRelease: featuregate.Beta},
 	VolumeSnapshotDataSource:       {Default: true, PreRelease: featuregate.Beta},
 	ProcMountType:                  {Default: false, PreRelease: featuregate.Alpha},
 	TTLAfterFinished:               {Default: false, PreRelease: featuregate.Alpha},
@@ -663,11 +687,12 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	ServiceTopology:                                {Default: false, PreRelease: featuregate.Alpha},
 	ServiceAppProtocol:                             {Default: true, PreRelease: featuregate.Beta},
 	ImmutableEphemeralVolumes:                      {Default: true, PreRelease: featuregate.Beta},
-	DefaultIngressClass:                            {Default: true, PreRelease: featuregate.Beta},
-	HugePageStorageMediumSize:                      {Default: false, PreRelease: featuregate.Alpha},
+	DefaultIngressClass:                            {Default: true, PreRelease: featuregate.GA, LockToDefault: true}, // remove in 1.20
+	HugePageStorageMediumSize:                      {Default: true, PreRelease: featuregate.Beta},
 	ExternalPolicyForExternalIP:                    {Default: true, PreRelease: featuregate.GA}, // remove in 1.20
 	AnyVolumeDataSource:                            {Default: false, PreRelease: featuregate.Alpha},
 	DefaultPodTopologySpread:                       {Default: false, PreRelease: featuregate.Alpha},
+	SetHostnameAsFQDN:                              {Default: false, PreRelease: featuregate.Alpha},
 
 	// inherited features from generic apiserver, relisted here to get a conflict if it is changed
 	// unintentionally on either side:
@@ -679,6 +704,7 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	genericfeatures.DryRun:                  {Default: true, PreRelease: featuregate.GA},
 	genericfeatures.ServerSideApply:         {Default: true, PreRelease: featuregate.Beta},
 	genericfeatures.APIPriorityAndFairness:  {Default: false, PreRelease: featuregate.Alpha},
+	genericfeatures.WarningHeaders:          {Default: true, PreRelease: featuregate.Beta},
 
 	// features that enable backwards compatibility but are scheduled to be removed
 	// ...

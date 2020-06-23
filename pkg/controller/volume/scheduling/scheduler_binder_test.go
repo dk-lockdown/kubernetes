@@ -465,13 +465,14 @@ func (env *testEnv) validateAssume(t *testing.T, pod *v1.Pod, bindings []*bindin
 	}
 }
 
-func (env *testEnv) validateFailedAssume(t *testing.T, pod *v1.Pod, bindings []*bindingInfo, provisionings []*v1.PersistentVolumeClaim) {
+func (env *testEnv) validateCacheRestored(t *testing.T, pod *v1.Pod, bindings []*bindingInfo, provisionings []*v1.PersistentVolumeClaim) {
 	// All PVs have been unmodified in cache
 	pvCache := env.internalBinder.pvCache
 	for _, b := range bindings {
 		pv, _ := pvCache.GetPV(b.pv.Name)
+		apiPV, _ := pvCache.GetAPIPV(b.pv.Name)
 		// PV could be nil if it's missing from cache
-		if pv != nil && pv != b.pv {
+		if pv != nil && pv != apiPV {
 			t.Errorf("PV %q was modified in cache", b.pv.Name)
 		}
 	}
@@ -771,6 +772,18 @@ func checkReasons(t *testing.T, actual, expected ConflictReasons) {
 	}
 }
 
+// findPodVolumes gets and finds volumes for given pod and node
+func findPodVolumes(binder SchedulerVolumeBinder, pod *v1.Pod, node *v1.Node) (ConflictReasons, error) {
+	boundClaims, claimsToBind, unboundClaimsImmediate, err := binder.GetPodVolumes(pod)
+	if err != nil {
+		return nil, err
+	}
+	if len(unboundClaimsImmediate) > 0 {
+		return nil, fmt.Errorf("pod has unbound immediate PersistentVolumeClaims")
+	}
+	return binder.FindPodVolumes(pod, boundClaims, claimsToBind, node)
+}
+
 func TestFindPodVolumesWithoutProvisioning(t *testing.T) {
 	type scenarioType struct {
 		// Inputs
@@ -907,7 +920,7 @@ func TestFindPodVolumesWithoutProvisioning(t *testing.T) {
 		}
 
 		// Execute
-		reasons, err := testEnv.binder.FindPodVolumes(scenario.pod, testNode)
+		reasons, err := findPodVolumes(testEnv.binder, scenario.pod, testNode)
 
 		// Validate
 		if !scenario.shouldFail && err != nil {
@@ -1012,7 +1025,7 @@ func TestFindPodVolumesWithProvisioning(t *testing.T) {
 		}
 
 		// Execute
-		reasons, err := testEnv.binder.FindPodVolumes(scenario.pod, testNode)
+		reasons, err := findPodVolumes(testEnv.binder, scenario.pod, testNode)
 
 		// Validate
 		if !scenario.shouldFail && err != nil {
@@ -1112,7 +1125,7 @@ func TestFindPodVolumesWithCSIMigration(t *testing.T) {
 		}
 
 		// Execute
-		reasons, err := testEnv.binder.FindPodVolumes(scenario.pod, node)
+		reasons, err := findPodVolumes(testEnv.binder, scenario.pod, node)
 
 		// Validate
 		if !scenario.shouldFail && err != nil {
@@ -1225,7 +1238,7 @@ func TestAssumePodVolumes(t *testing.T) {
 			scenario.expectedProvisionings = scenario.provisionedPVCs
 		}
 		if scenario.shouldFail {
-			testEnv.validateFailedAssume(t, pod, scenario.expectedBindings, scenario.expectedProvisionings)
+			testEnv.validateCacheRestored(t, pod, scenario.bindings, scenario.provisionedPVCs)
 		} else {
 			testEnv.validateAssume(t, pod, scenario.expectedBindings, scenario.expectedProvisionings)
 		}
@@ -1235,6 +1248,34 @@ func TestAssumePodVolumes(t *testing.T) {
 	for name, scenario := range scenarios {
 		t.Run(name, func(t *testing.T) { run(t, scenario) })
 	}
+}
+
+func TestRevertAssumedPodVolumes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	podPVCs := []*v1.PersistentVolumeClaim{unboundPVC, provisionedPVC}
+	bindings := []*bindingInfo{makeBinding(unboundPVC, pvNode1a)}
+	pvs := []*v1.PersistentVolume{pvNode1a}
+	provisionedPVCs := []*v1.PersistentVolumeClaim{provisionedPVC}
+	expectedBindings := []*bindingInfo{makeBinding(unboundPVC, pvNode1aBound)}
+	expectedProvisionings := []*v1.PersistentVolumeClaim{selectedNodePVC}
+
+	// Setup
+	testEnv := newTestBinder(t, ctx.Done())
+	testEnv.initClaims(podPVCs, podPVCs)
+	pod := makePod(podPVCs)
+	testEnv.initPodCache(pod, "node1", bindings, provisionedPVCs)
+	testEnv.initVolumes(pvs, pvs)
+
+	allbound, err := testEnv.binder.AssumePodVolumes(pod, "node1")
+	if allbound || err != nil {
+		t.Errorf("No volumes are assumed")
+	}
+	testEnv.validateAssume(t, pod, expectedBindings, expectedProvisionings)
+
+	testEnv.binder.RevertAssumedPodVolumes(pod, "node1")
+	testEnv.validateCacheRestored(t, pod, bindings, provisionedPVCs)
 }
 
 func TestBindAPIUpdate(t *testing.T) {
@@ -1933,7 +1974,7 @@ func TestFindAssumeVolumes(t *testing.T) {
 
 	// Execute
 	// 1. Find matching PVs
-	reasons, err := testEnv.binder.FindPodVolumes(pod, testNode)
+	reasons, err := findPodVolumes(testEnv.binder, pod, testNode)
 	if err != nil {
 		t.Errorf("Test failed: FindPodVolumes returned error: %v", err)
 	}
@@ -1959,7 +2000,7 @@ func TestFindAssumeVolumes(t *testing.T) {
 	// This should always return the original chosen pv
 	// Run this many times in case sorting returns different orders for the two PVs.
 	for i := 0; i < 50; i++ {
-		reasons, err := testEnv.binder.FindPodVolumes(pod, testNode)
+		reasons, err := findPodVolumes(testEnv.binder, pod, testNode)
 		if err != nil {
 			t.Errorf("Test failed: FindPodVolumes returned error: %v", err)
 		}

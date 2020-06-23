@@ -33,6 +33,7 @@ type DefaultPodTopologySpread struct {
 	handle framework.FrameworkHandle
 }
 
+var _ framework.PreScorePlugin = &DefaultPodTopologySpread{}
 var _ framework.ScorePlugin = &DefaultPodTopologySpread{}
 
 const (
@@ -171,6 +172,9 @@ func (pl *DefaultPodTopologySpread) ScoreExtensions() framework.ScoreExtensions 
 
 // PreScore builds and writes cycle state used by Score and NormalizeScore.
 func (pl *DefaultPodTopologySpread) PreScore(ctx context.Context, cycleState *framework.CycleState, pod *v1.Pod, nodes []*v1.Node) *framework.Status {
+	if skipDefaultPodTopologySpread(pod) {
+		return nil
+	}
 	var selector labels.Selector
 	informerFactory := pl.handle.SharedInformerFactory()
 	selector = helper.DefaultSelector(

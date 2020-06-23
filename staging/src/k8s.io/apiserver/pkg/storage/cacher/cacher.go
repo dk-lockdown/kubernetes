@@ -60,11 +60,6 @@ const (
 
 // Config contains the configuration for a given Cache.
 type Config struct {
-	// Maximum size of the history cached in memory.
-	//
-	// DEPRECATED: Cache capacity is dynamic and this field is no longer used.
-	CacheCapacity int
-
 	// An underlying storage.Interface.
 	Storage storage.Interface
 
@@ -97,6 +92,8 @@ type Config struct {
 	NewListFunc func() runtime.Object
 
 	Codec runtime.Codec
+
+	Clock clock.Clock
 }
 
 type watchersMap map[int]*cacheWatcher
@@ -323,7 +320,9 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 		}
 	}
 
-	clock := clock.RealClock{}
+	if config.Clock == nil {
+		config.Clock = clock.RealClock{}
+	}
 	objType := reflect.TypeOf(obj)
 	cacher := &Cacher{
 		ready:          newReady(),
@@ -346,9 +345,9 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 		// and there are no guarantees on the order that they will stop.
 		// So we will be simply closing the channel, and synchronizing on the WaitGroup.
 		stopCh:           stopCh,
-		clock:            clock,
+		clock:            config.Clock,
 		timer:            time.NewTimer(time.Duration(0)),
-		bookmarkWatchers: newTimeBucketWatchers(clock, defaultBookmarkFrequency),
+		bookmarkWatchers: newTimeBucketWatchers(config.Clock, defaultBookmarkFrequency),
 	}
 
 	// Ensure that timer is stopped.
@@ -359,7 +358,7 @@ func NewCacherFromConfig(config Config) (*Cacher, error) {
 	}
 
 	watchCache := newWatchCache(
-		config.KeyFunc, cacher.processEvent, config.GetAttrsFunc, config.Versioner, config.Indexers, objType)
+		config.KeyFunc, cacher.processEvent, config.GetAttrsFunc, config.Versioner, config.Indexers, config.Clock, objType)
 	listerWatcher := NewCacherListerWatcher(config.Storage, config.ResourcePrefix, config.NewListFunc)
 	reflectorName := "storage/cacher.go:" + config.ResourcePrefix
 
@@ -400,6 +399,7 @@ func (c *Cacher) startCaching(stopChannel <-chan struct{}) {
 	c.watchCache.SetOnReplace(func() {
 		successfulList = true
 		c.ready.set(true)
+		klog.V(1).Infof("cacher (%v): initialized", c.objectType.String())
 	})
 	defer func() {
 		if successfulList {
@@ -413,7 +413,7 @@ func (c *Cacher) startCaching(stopChannel <-chan struct{}) {
 	// Also note that startCaching is called in a loop, so there's no need
 	// to have another loop here.
 	if err := c.reflector.ListAndWatch(stopChannel); err != nil {
-		klog.Errorf("unexpected ListAndWatch error: %v", err)
+		klog.Errorf("cacher (%v): unexpected ListAndWatch error: %v; reinitializing...", c.objectType.String(), err)
 	}
 }
 

@@ -21,6 +21,11 @@ import (
 	"sync"
 
 	"github.com/go-logr/logr"
+	json "k8s.io/component-base/logs/json"
+)
+
+const (
+	jsonLogFormat = "json"
 )
 
 var logRegistry = NewLogFormatRegistry()
@@ -75,7 +80,19 @@ func (lfr *LogFormatRegistry) Delete(name string) {
 	delete(lfr.registry, name)
 }
 
+// List names of registered log formats
+func (lfr *LogFormatRegistry) List() []string {
+	lfr.mu.Lock()
+	defer lfr.mu.Unlock()
+	formats := make([]string, 0, len(lfr.registry))
+	for f := range lfr.registry {
+		formats = append(formats, f)
+	}
+	return formats
+}
+
 func init() {
 	// Text format is default klog format
-	logRegistry.Register("text", nil)
+	logRegistry.Register(defaultLogFormat, nil)
+	logRegistry.Register(jsonLogFormat, json.JSONLogger)
 }

@@ -376,9 +376,18 @@ function try-load-docker-image {
   set +e
   local -r max_attempts=5
   local -i attempt_num=1
-  until timeout 30 ${LOAD_IMAGE_COMMAND:-docker load -i} "${img}"; do
+
+  if [[ "${CONTAINER_RUNTIME_NAME:-}" == "docker" ]]; then
+    load_image_command=${LOAD_IMAGE_COMMAND:-docker load -i}
+  elif [[ "${CONTAINER_RUNTIME_NAME:-}" == "containerd" ]]; then
+    load_image_command=${LOAD_IMAGE_COMMAND:-ctr -n=k8s.io images import}
+  else
+    load_image_command="${LOAD_IMAGE_COMMAND:-}"
+  fi
+
+  until timeout 30 ${load_image_command} "${img}"; do
     if [[ "${attempt_num}" == "${max_attempts}" ]]; then
-      echo "Fail to load docker image file ${img} after ${max_attempts} retries. Exit!!"
+      echo "Fail to load docker image file ${img} using ${load_image_command} after ${max_attempts} retries. Exit!!"
       exit 1
     else
       attempt_num=$((attempt_num+1))
@@ -423,12 +432,7 @@ function install-docker {
     software-properties-common \
     lsb-release
 
-  # focal repo for docker is not yet available, so we use bonic for now
-  # https://github.com/kubernetes/kubernetes/issues/90709
   release=$(lsb_release -cs)
-  if [ "$release" == "focal" ]; then
-    release="bionic";
-  fi
 
   # Add the Docker apt-repository
   curl -fsSL https://download.docker.com/linux/$(. /etc/os-release; echo "$ID")/gpg \
@@ -469,12 +473,7 @@ function install-containerd-ubuntu {
     software-properties-common \
     lsb-release
 
-  # focal repo for docker is not yet available, so we use bonic for now
-  # https://github.com/kubernetes/kubernetes/issues/90709
   release=$(lsb_release -cs)
-  if [ "$release" == "focal" ]; then
-    release="bionic";
-  fi
 
   # Add the Docker apt-repository (as we install containerd from there)
   curl -fsSL https://download.docker.com/linux/$(. /etc/os-release; echo "$ID")/gpg \

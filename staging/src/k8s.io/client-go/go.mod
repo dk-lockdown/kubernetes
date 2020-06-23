@@ -9,7 +9,7 @@ require (
 	github.com/Azure/go-autorest/autorest v0.9.6
 	github.com/Azure/go-autorest/autorest/adal v0.8.2
 	github.com/davecgh/go-spew v1.1.1
-	github.com/evanphx/json-patch v4.2.0+incompatible
+	github.com/evanphx/json-patch v0.0.0-20190815234213-e83c0a1c26c8
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/groupcache v0.0.0-20191227052852-215e87163ea7
 	github.com/golang/protobuf v1.4.2
@@ -29,7 +29,7 @@ require (
 	k8s.io/api v0.0.0
 	k8s.io/apimachinery v0.0.0
 	k8s.io/klog/v2 v2.1.0
-	k8s.io/utils v0.0.0-20200414100711-2df71ebbae66
+	k8s.io/utils v0.0.0-20200619165400-6e3d28b6ed19
 	sigs.k8s.io/yaml v1.2.0
 )
 

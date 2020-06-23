@@ -33,10 +33,12 @@ import (
 	policy "k8s.io/api/policy/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	corelisters "k8s.io/client-go/listers/core/v1"
-	policylisters "k8s.io/client-go/listers/policy/v1beta1"
 	extenderv1 "k8s.io/kube-scheduler/extender/v1"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
+	kubefeatures "k8s.io/kubernetes/pkg/features"
+	"k8s.io/kubernetes/pkg/scheduler/framework/runtime"
 	framework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/internal/cache"
 	"k8s.io/kubernetes/pkg/scheduler/internal/parallelize"
@@ -100,11 +102,6 @@ func (f *FitError) Error() string {
 // TODO: Rename this type.
 type ScheduleAlgorithm interface {
 	Schedule(context.Context, *profile.Profile, *framework.CycleState, *v1.Pod) (scheduleResult ScheduleResult, err error)
-	// Preempt receives scheduling errors for a pod and tries to create room for
-	// the pod by preempting lower priority pods if possible.
-	// It returns the node where preemption happened, a list of preempted pods, a
-	// list of pods whose nominated node name should be removed, and error if any.
-	Preempt(context.Context, *profile.Profile, *framework.CycleState, *v1.Pod, error) (selectedNode string, preemptedPods []*v1.Pod, cleanupNominatedPods []*v1.Pod, err error)
 	// Extenders returns a slice of extender config. This is exposed for
 	// testing.
 	Extenders() []framework.Extender
@@ -127,7 +124,6 @@ type genericScheduler struct {
 	extenders                []framework.Extender
 	nodeInfoSnapshot         *internalcache.Snapshot
 	pvcLister                corelisters.PersistentVolumeClaimLister
-	pdbLister                policylisters.PodDisruptionBudgetLister
 	disablePreemption        bool
 	percentageOfNodesToScore int32
 	nextStartNodeIndex       int
@@ -237,7 +233,7 @@ func (g *genericScheduler) selectHost(nodeScoreList framework.NodeScoreList) (st
 	return selected, nil
 }
 
-// preempt finds nodes with pods that can be preempted to make room for "pod" to
+// Preempt finds nodes with pods that can be preempted to make room for "pod" to
 // schedule. It chooses one of the nodes and preempts the pods on the node and
 // returns 1) the node, 2) the list of preempted pods if such a node is found,
 // 3) A list of pods whose nominated node name should be cleared, and 4) any
@@ -249,29 +245,35 @@ func (g *genericScheduler) selectHost(nodeScoreList framework.NodeScoreList) (st
 // other pods with the same priority. The nominated pod prevents other pods from
 // using the nominated resources and the nominated pod could take a long time
 // before it is retried after many other pending pods.
-func (g *genericScheduler) Preempt(ctx context.Context, prof *profile.Profile, state *framework.CycleState, pod *v1.Pod, scheduleErr error) (string, []*v1.Pod, []*v1.Pod, error) {
-	// Scheduler may return various types of errors. Consider preemption only if
-	// the error is of type FitError.
-	fitError, ok := scheduleErr.(*FitError)
-	if !ok || fitError == nil {
-		return "", nil, nil, nil
-	}
-	if !podEligibleToPreemptOthers(pod, g.nodeInfoSnapshot.NodeInfos()) {
-		klog.V(5).Infof("Pod %v/%v is not eligible for more preemption.", pod.Namespace, pod.Name)
-		return "", nil, nil, nil
-	}
-	allNodes, err := g.nodeInfoSnapshot.NodeInfos().List()
+func Preempt(ctx context.Context, fh framework.FrameworkHandle, state *framework.CycleState, pod *v1.Pod, m framework.NodeToStatusMap) (string, error) {
+	cs := fh.ClientSet()
+	// TODO(Huang-Wei): get pod from informer cache instead of API server.
+	pod, err := util.GetUpdatedPod(cs, pod)
 	if err != nil {
-		return "", nil, nil, err
+		klog.Errorf("Error getting the updated preemptor pod object: %v", err)
+		return "", err
+	}
+
+	if !podEligibleToPreemptOthers(pod, fh.SnapshotSharedLister().NodeInfos()) {
+		klog.V(5).Infof("Pod %v/%v is not eligible for more preemption.", pod.Namespace, pod.Name)
+		return "", nil
+	}
+	allNodes, err := fh.SnapshotSharedLister().NodeInfos().List()
+	if err != nil {
+		return "", err
 	}
 	if len(allNodes) == 0 {
-		return "", nil, nil, ErrNoNodesAvailable
+		return "", ErrNoNodesAvailable
 	}
-	potentialNodes := nodesWherePreemptionMightHelp(allNodes, fitError)
+	potentialNodes := nodesWherePreemptionMightHelp(allNodes, m)
 	if len(potentialNodes) == 0 {
 		klog.V(3).Infof("Preemption will not help schedule pod %v/%v on any node.", pod.Namespace, pod.Name)
 		// In this case, we should clean-up any existing nominated node name of the pod.
-		return "", nil, []*v1.Pod{pod}, nil
+		if err := util.ClearNominatedNodeName(cs, pod); err != nil {
+			klog.Errorf("Cannot clear 'NominatedNodeName' field of pod %v/%v: %v", pod.Namespace, pod.Name, err)
+			// We do not return as this error is not critical.
+		}
+		return "", nil
 	}
 	if klog.V(5).Enabled() {
 		var sample []string
@@ -280,51 +282,71 @@ func (g *genericScheduler) Preempt(ctx context.Context, prof *profile.Profile, s
 		}
 		klog.Infof("%v potential nodes for preemption, first %v are: %v", len(potentialNodes), len(sample), sample)
 	}
-	var pdbs []*policy.PodDisruptionBudget
-	if g.pdbLister != nil {
-		pdbs, err = g.pdbLister.List(labels.Everything())
-		if err != nil {
-			return "", nil, nil, err
-		}
-	}
-	nodeNameToVictims, err := selectNodesForPreemption(ctx, prof, g.podNominator, state, pod, potentialNodes, pdbs)
+	pdbs, err := getPodDisruptionBudgets(fh)
 	if err != nil {
-		return "", nil, nil, err
+		return "", err
+	}
+	nodeNameToVictims, err := selectNodesForPreemption(ctx, fh.PreemptHandle(), fh.PreemptHandle(), state, pod, potentialNodes, pdbs)
+	if err != nil {
+		return "", err
 	}
 
 	// We will only check nodeNameToVictims with extenders that support preemption.
 	// Extenders which do not support preemption may later prevent preemptor from being scheduled on the nominated
 	// node. In that case, scheduler will find a different host for the preemptor in subsequent scheduling cycles.
-	nodeNameToVictims, err = g.processPreemptionWithExtenders(pod, nodeNameToVictims)
+	nodeNameToVictims, err = processPreemptionWithExtenders(fh, pod, nodeNameToVictims)
 	if err != nil {
-		return "", nil, nil, err
+		return "", err
 	}
 
 	candidateNode := pickOneNodeForPreemption(nodeNameToVictims)
 	if len(candidateNode) == 0 {
-		return "", nil, nil, nil
+		return "", nil
 	}
+
+	victims := nodeNameToVictims[candidateNode].Pods
+	for _, victim := range victims {
+		if err := util.DeletePod(cs, victim); err != nil {
+			klog.Errorf("Error preempting pod %v/%v: %v", victim.Namespace, victim.Name, err)
+			return "", err
+		}
+		// If the victim is a WaitingPod, send a reject message to the PermitPlugin
+		if waitingPod := fh.GetWaitingPod(victim.UID); waitingPod != nil {
+			waitingPod.Reject("preempted")
+		}
+		fh.EventRecorder().Eventf(victim, pod, v1.EventTypeNormal, "Preempted", "Preempting", "Preempted by %v/%v on node %v", pod.Namespace, pod.Name, candidateNode)
+	}
+	metrics.PreemptionVictims.Observe(float64(len(victims)))
 
 	// Lower priority pods nominated to run on this node, may no longer fit on
 	// this node. So, we should remove their nomination. Removing their
 	// nomination updates these pods and moves them to the active queue. It
 	// lets scheduler find another place for them.
-	nominatedPods := g.getLowerPriorityNominatedPods(pod, candidateNode)
-	return candidateNode, nodeNameToVictims[candidateNode].Pods, nominatedPods, nil
+	nominatedPods := getLowerPriorityNominatedPods(fh.PreemptHandle(), pod, candidateNode)
+	if err := util.ClearNominatedNodeName(cs, nominatedPods...); err != nil {
+		klog.Errorf("Cannot clear 'NominatedNodeName' field: %v", err)
+		// We do not return as this error is not critical.
+	}
+
+	return candidateNode, nil
+}
+
+func getPodDisruptionBudgets(fh framework.FrameworkHandle) ([]*policy.PodDisruptionBudget, error) {
+	if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.PodDisruptionBudget) {
+		return fh.SharedInformerFactory().Policy().V1beta1().PodDisruptionBudgets().Lister().List(labels.Everything())
+	}
+	return nil, nil
 }
 
 // processPreemptionWithExtenders processes preemption with extenders
-func (g *genericScheduler) processPreemptionWithExtenders(
-	pod *v1.Pod,
-	nodeNameToVictims map[string]*extenderv1.Victims,
-) (map[string]*extenderv1.Victims, error) {
+func processPreemptionWithExtenders(fh framework.FrameworkHandle, pod *v1.Pod, nodeNameToVictims map[string]*extenderv1.Victims) (map[string]*extenderv1.Victims, error) {
 	if len(nodeNameToVictims) > 0 {
-		for _, extender := range g.extenders {
+		for _, extender := range fh.PreemptHandle().Extenders() {
 			if extender.SupportsPreemption() && extender.IsInterested(pod) {
 				newNodeNameToVictims, err := extender.ProcessPreemption(
 					pod,
 					nodeNameToVictims,
-					g.nodeInfoSnapshot.NodeInfos(),
+					fh.SnapshotSharedLister().NodeInfos(),
 				)
 				if err != nil {
 					if extender.IsIgnorable() {
@@ -357,8 +379,8 @@ func (g *genericScheduler) processPreemptionWithExtenders(
 // manipulation of NodeInfo and PreFilter state per nominated pod. It may not be
 // worth the complexity, especially because we generally expect to have a very
 // small number of nominated pods per node.
-func (g *genericScheduler) getLowerPriorityNominatedPods(pod *v1.Pod, nodeName string) []*v1.Pod {
-	pods := g.podNominator.NominatedPodsForNode(nodeName)
+func getLowerPriorityNominatedPods(pn framework.PodNominator, pod *v1.Pod, nodeName string) []*v1.Pod {
+	pods := pn.NominatedPodsForNode(nodeName)
 
 	if len(pods) == 0 {
 		return nil
@@ -478,7 +500,7 @@ func (g *genericScheduler) findNodesThatPassFilters(ctx context.Context, prof *p
 		// We record Filter extension point latency here instead of in framework.go because framework.RunFilterPlugins
 		// function is called for each node, whereas we want to have an overall latency for all nodes per scheduling cycle.
 		// Note that this latency also includes latency for `addNominatedPods`, which calls framework.RunPreFilterAddPod.
-		metrics.FrameworkExtensionPointDuration.WithLabelValues(framework.Filter, statusCode.String()).Observe(metrics.SinceInSeconds(beginCheckNode))
+		metrics.FrameworkExtensionPointDuration.WithLabelValues(runtime.Filter, statusCode.String()).Observe(metrics.SinceInSeconds(beginCheckNode))
 	}()
 
 	// Stops searching for more nodes once the configured number of feasible nodes
@@ -917,9 +939,12 @@ func filterPodsWithPDBViolation(pods []*v1.Pod, pdbs []*policy.PodDisruptionBudg
 				// We have found a matching PDB.
 				if pdbsAllowed[i] <= 0 {
 					pdbForPodIsViolated = true
-					break
 				} else {
-					pdbsAllowed[i]--
+					// Only decrement the matched pdb when it's not in its <DisruptedPods>;
+					// otherwise we may over-decrement the budget number.
+					if _, exist := pdb.Status.DisruptedPods[pod.Name]; !exist {
+						pdbsAllowed[i]--
+					}
 				}
 			}
 		}
@@ -1041,13 +1066,13 @@ func selectVictimsOnNode(
 
 // nodesWherePreemptionMightHelp returns a list of nodes with failed predicates
 // that may be satisfied by removing pods from the node.
-func nodesWherePreemptionMightHelp(nodes []*framework.NodeInfo, fitErr *FitError) []*framework.NodeInfo {
+func nodesWherePreemptionMightHelp(nodes []*framework.NodeInfo, m framework.NodeToStatusMap) []*framework.NodeInfo {
 	var potentialNodes []*framework.NodeInfo
 	for _, node := range nodes {
 		name := node.Node().Name
 		// We reply on the status by each plugin - 'Unschedulable' or 'UnschedulableAndUnresolvable'
 		// to determine whether preemption may help or not on the node.
-		if fitErr.FilteredNodesStatuses[name].Code() == framework.UnschedulableAndUnresolvable {
+		if m[name].Code() == framework.UnschedulableAndUnresolvable {
 			continue
 		}
 		potentialNodes = append(potentialNodes, node)
@@ -1114,7 +1139,6 @@ func NewGenericScheduler(
 	nodeInfoSnapshot *internalcache.Snapshot,
 	extenders []framework.Extender,
 	pvcLister corelisters.PersistentVolumeClaimLister,
-	pdbLister policylisters.PodDisruptionBudgetLister,
 	disablePreemption bool,
 	percentageOfNodesToScore int32) ScheduleAlgorithm {
 	return &genericScheduler{
@@ -1123,7 +1147,6 @@ func NewGenericScheduler(
 		extenders:                extenders,
 		nodeInfoSnapshot:         nodeInfoSnapshot,
 		pvcLister:                pvcLister,
-		pdbLister:                pdbLister,
 		disablePreemption:        disablePreemption,
 		percentageOfNodesToScore: percentageOfNodesToScore,
 	}
