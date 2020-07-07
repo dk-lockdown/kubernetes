@@ -21,7 +21,7 @@ jobs:
 
     - name: Dump GitHub context
       #env:
-      #  KUBEADM_VERSION: v1.18.2
+      #  KUBEADM_VERSION: v1.18.5
       run: echo "::set-env name=packageName::v1.18.5"
     
     - name: Get Env
