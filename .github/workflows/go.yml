@@ -16,13 +16,13 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v2
       with:
-        go-version: ^1.13
+        go-version: ^1.14
       id: go
 
     - name: Dump GitHub context
       #env:
       #  KUBEADM_VERSION: v1.18.2
-      run: echo "::set-env name=packageName::v1.15.3"
+      run: echo "::set-env name=packageName::v1.18.5"
     
     - name: Get Env
       run: echo '${{ env.packageName }}'
@@ -59,7 +59,7 @@ jobs:
     #  run: git checkout v1.18.2
 
     - name: Build
-      run: make all WHAT=cmd/kubeadm GOFLAGS=-v
+      run: KUBE_GIT_TREE_STATE=clean make all WHAT=cmd/kubeadm GOFLAGS=-v
 
     - name: Get paGth
       run: find . -name kubeadm
