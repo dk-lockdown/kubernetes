@@ -62,7 +62,7 @@ import (
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/klog/v2"
 
-	"k8s.io/kubernetes/pkg/master"
+	"k8s.io/kubernetes/pkg/controlplane"
 	"k8s.io/kubernetes/test/integration"
 	"k8s.io/kubernetes/test/integration/framework"
 )
@@ -82,7 +82,7 @@ func setupWithResources(t *testing.T, groupVersions []schema.GroupVersion, resou
 func setupWithResourcesWithOptions(t *testing.T, opts *framework.MasterConfigOptions, groupVersions []schema.GroupVersion, resources []schema.GroupVersionResource) (*httptest.Server, clientset.Interface, framework.CloseFunc) {
 	masterConfig := framework.NewIntegrationTestMasterConfigWithOptions(opts)
 	if len(groupVersions) > 0 || len(resources) > 0 {
-		resourceConfig := master.DefaultAPIResourceConfigSource()
+		resourceConfig := controlplane.DefaultAPIResourceConfigSource()
 		resourceConfig.EnableVersions(groupVersions...)
 		resourceConfig.EnableResources(resources...)
 		masterConfig.ExtraConfig.APIResourceConfigSource = resourceConfig
@@ -393,7 +393,33 @@ func TestListOptions(t *testing.T) {
 				for _, continueToken := range continueTokens {
 					for _, rv := range rvs {
 						for _, rvMatch := range rvMatches {
-							name := fmt.Sprintf("limit=%d continue=%s rv=%s rvMatch=%s", limit, continueToken, rv, rvMatch)
+							rvName := ""
+							switch rv {
+							case "":
+								rvName = "empty"
+							case "0":
+								rvName = "0"
+							case compactedRv:
+								rvName = "compacted"
+							case invalidResourceVersion:
+								rvName = "invalid"
+							default:
+								rvName = "unknown"
+							}
+
+							continueName := ""
+							switch continueToken {
+							case "":
+								continueName = "empty"
+							case validContinueToken:
+								continueName = "valid"
+							case invalidContinueToken:
+								continueName = "invalid"
+							default:
+								continueName = "unknown"
+							}
+
+							name := fmt.Sprintf("limit=%d continue=%s rv=%s rvMatch=%s", limit, continueName, rvName, rvMatch)
 							t.Run(name, func(t *testing.T) {
 								opts := metav1.ListOptions{
 									ResourceVersion:      rv,

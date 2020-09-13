@@ -22,14 +22,15 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"strconv"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
-	coreinformers "k8s.io/client-go/informers/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
@@ -76,16 +77,11 @@ type Scheduler struct {
 	// Close this to shut down the scheduler.
 	StopEverything <-chan struct{}
 
-	// Disable pod preemption or not.
-	DisablePreemption bool
-
 	// SchedulingQueue holds pods to be scheduled
 	SchedulingQueue internalqueue.SchedulingQueue
 
 	// Profiles are the scheduling profiles.
 	Profiles profile.Map
-
-	scheduledPodsHasSynced func() bool
 
 	client clientset.Interface
 }
@@ -97,7 +93,6 @@ func (sched *Scheduler) Cache() internalcache.Cache {
 
 type schedulerOptions struct {
 	schedulerAlgorithmSource schedulerapi.SchedulerAlgorithmSource
-	disablePreemption        bool
 	percentageOfNodesToScore int32
 	podInitialBackoffSeconds int64
 	podMaxBackoffSeconds     int64
@@ -123,13 +118,6 @@ func WithProfiles(p ...schedulerapi.KubeSchedulerProfile) Option {
 func WithAlgorithmSource(source schedulerapi.SchedulerAlgorithmSource) Option {
 	return func(o *schedulerOptions) {
 		o.schedulerAlgorithmSource = source
-	}
-}
-
-// WithPreemptionDisabled sets disablePreemption for Scheduler, the default value is false
-func WithPreemptionDisabled(disablePreemption bool) Option {
-	return func(o *schedulerOptions) {
-		o.disablePreemption = disablePreemption
 	}
 }
 
@@ -187,7 +175,6 @@ var defaultSchedulerOptions = schedulerOptions{
 	schedulerAlgorithmSource: schedulerapi.SchedulerAlgorithmSource{
 		Provider: defaultAlgorithmSourceProviderName(),
 	},
-	disablePreemption:        false,
 	percentageOfNodesToScore: schedulerapi.DefaultPercentageOfNodesToScore,
 	podInitialBackoffSeconds: int64(internalqueue.DefaultPodInitialBackoffDuration.Seconds()),
 	podMaxBackoffSeconds:     int64(internalqueue.DefaultPodMaxBackoffDuration.Seconds()),
@@ -196,7 +183,6 @@ var defaultSchedulerOptions = schedulerOptions{
 // New returns a Scheduler
 func New(client clientset.Interface,
 	informerFactory informers.SharedInformerFactory,
-	podInformer coreinformers.PodInformer,
 	recorderFactory profile.RecorderFactory,
 	stopCh <-chan struct{},
 	opts ...Option) (*Scheduler, error) {
@@ -224,10 +210,8 @@ func New(client clientset.Interface,
 		client:                   client,
 		recorderFactory:          recorderFactory,
 		informerFactory:          informerFactory,
-		podInformer:              podInformer,
 		schedulerCache:           schedulerCache,
 		StopEverything:           stopEverything,
-		disablePreemption:        options.disablePreemption,
 		percentageOfNodesToScore: options.percentageOfNodesToScore,
 		podInitialBackoffSeconds: options.podInitialBackoffSeconds,
 		podMaxBackoffSeconds:     options.podMaxBackoffSeconds,
@@ -276,12 +260,10 @@ func New(client clientset.Interface,
 		return nil, fmt.Errorf("unsupported algorithm source: %v", source)
 	}
 	// Additional tweaks to the config produced by the configurator.
-	sched.DisablePreemption = options.disablePreemption
 	sched.StopEverything = stopEverything
 	sched.client = client
-	sched.scheduledPodsHasSynced = podInformer.Informer().HasSynced
 
-	addAllEventHandlers(sched, informerFactory, podInformer)
+	addAllEventHandlers(sched, informerFactory)
 	return sched, nil
 }
 
@@ -323,9 +305,6 @@ func initPolicyFromConfigMap(client clientset.Interface, policyRef *schedulerapi
 
 // Run begins watching and scheduling. It waits for cache to be synced, then starts scheduling and blocked until the context is done.
 func (sched *Scheduler) Run(ctx context.Context) {
-	if !cache.WaitForCacheSync(ctx.Done(), sched.scheduledPodsHasSynced) {
-		return
-	}
 	sched.SchedulingQueue.Run()
 	wait.UntilWithContext(ctx, sched.scheduleOne, 0)
 	sched.SchedulingQueue.Close()
@@ -435,9 +414,6 @@ func (sched *Scheduler) finishBinding(prof *profile.Profile, assumed *v1.Pod, ta
 	}
 	if err != nil {
 		klog.V(1).Infof("Failed to bind pod: %v/%v", assumed.Namespace, assumed.Name)
-		if err := sched.SchedulerCache.ForgetPod(assumed); err != nil {
-			klog.Errorf("scheduler cache ForgetPod failed: %v", err)
-		}
 		return
 	}
 
@@ -481,9 +457,8 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		// into the resources that were preempted, but this is harmless.
 		nominatedNode := ""
 		if fitError, ok := err.(*core.FitError); ok {
-			if sched.DisablePreemption || !prof.HasPostFilterPlugins() {
-				klog.V(3).Infof("Pod priority feature is not enabled or preemption is disabled by scheduler configuration." +
-					" No preemption is performed.")
+			if !prof.HasPostFilterPlugins() {
+				klog.V(3).Infof("No PostFilter plugins are registered, so no preemption will be performed.")
 			} else {
 				// Run PostFilter plugins to try to make the pod schedulable in a future scheduling cycle.
 				result, status := prof.RunPostFilterPlugins(ctx, state, pod, fitError.FilteredNodesStatuses)
@@ -515,28 +490,28 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	// This allows us to keep scheduling without waiting on binding to occur.
 	assumedPodInfo := podInfo.DeepCopy()
 	assumedPod := assumedPodInfo.Pod
-
-	// Run the Reserve method of reserve plugins.
-	if sts := prof.RunReservePluginsReserve(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost); !sts.IsSuccess() {
-		sched.recordSchedulingFailure(prof, assumedPodInfo, sts.AsError(), SchedulerError, "")
-		metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
-		// trigger un-reserve to clean up state associated with the reserved Pod
-		prof.RunReservePluginsUnreserve(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
-		return
-	}
-
 	// assume modifies `assumedPod` by setting NodeName=scheduleResult.SuggestedHost
 	err = sched.assume(assumedPod, scheduleResult.SuggestedHost)
 	if err != nil {
+		metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
 		// This is most probably result of a BUG in retrying logic.
 		// We report an error here so that pod scheduling can be retried.
 		// This relies on the fact that Error will check if the pod has been bound
 		// to a node and if so will not add it back to the unscheduled pods queue
 		// (otherwise this would cause an infinite loop).
 		sched.recordSchedulingFailure(prof, assumedPodInfo, err, SchedulerError, "")
+		return
+	}
+
+	// Run the Reserve method of reserve plugins.
+	if sts := prof.RunReservePluginsReserve(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost); !sts.IsSuccess() {
 		metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
-		// trigger un-reserve plugins to clean up state associated with the reserved Pod
+		// trigger un-reserve to clean up state associated with the reserved Pod
 		prof.RunReservePluginsUnreserve(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
+		if forgetErr := sched.Cache().ForgetPod(assumedPod); forgetErr != nil {
+			klog.Errorf("scheduler cache ForgetPod failed: %v", forgetErr)
+		}
+		sched.recordSchedulingFailure(prof, assumedPodInfo, sts.AsError(), SchedulerError, "")
 		return
 	}
 
@@ -551,11 +526,11 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
 			reason = SchedulerError
 		}
+		// One of the plugins returned status different than success or wait.
+		prof.RunReservePluginsUnreserve(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 		if forgetErr := sched.Cache().ForgetPod(assumedPod); forgetErr != nil {
 			klog.Errorf("scheduler cache ForgetPod failed: %v", forgetErr)
 		}
-		// One of the plugins returned status different than success or wait.
-		prof.RunReservePluginsUnreserve(schedulingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 		sched.recordSchedulingFailure(prof, assumedPodInfo, runPermitStatus.AsError(), reason, "")
 		return
 	}
@@ -577,11 +552,11 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 				metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
 				reason = SchedulerError
 			}
+			// trigger un-reserve plugins to clean up state associated with the reserved Pod
+			prof.RunReservePluginsUnreserve(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 			if forgetErr := sched.Cache().ForgetPod(assumedPod); forgetErr != nil {
 				klog.Errorf("scheduler cache ForgetPod failed: %v", forgetErr)
 			}
-			// trigger un-reserve plugins to clean up state associated with the reserved Pod
-			prof.RunReservePluginsUnreserve(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 			sched.recordSchedulingFailure(prof, assumedPodInfo, waitOnPermitStatus.AsError(), reason, "")
 			return
 		}
@@ -589,15 +564,13 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		// Run "prebind" plugins.
 		preBindStatus := prof.RunPreBindPlugins(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 		if !preBindStatus.IsSuccess() {
-			var reason string
 			metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
-			reason = SchedulerError
+			// trigger un-reserve plugins to clean up state associated with the reserved Pod
+			prof.RunReservePluginsUnreserve(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
 			if forgetErr := sched.Cache().ForgetPod(assumedPod); forgetErr != nil {
 				klog.Errorf("scheduler cache ForgetPod failed: %v", forgetErr)
 			}
-			// trigger un-reserve plugins to clean up state associated with the reserved Pod
-			prof.RunReservePluginsUnreserve(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
-			sched.recordSchedulingFailure(prof, assumedPodInfo, preBindStatus.AsError(), reason, "")
+			sched.recordSchedulingFailure(prof, assumedPodInfo, preBindStatus.AsError(), SchedulerError, "")
 			return
 		}
 
@@ -606,6 +579,9 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			metrics.PodScheduleError(prof.Name, metrics.SinceInSeconds(start))
 			// trigger un-reserve plugins to clean up state associated with the reserved Pod
 			prof.RunReservePluginsUnreserve(bindingCycleCtx, state, assumedPod, scheduleResult.SuggestedHost)
+			if err := sched.SchedulerCache.ForgetPod(assumedPod); err != nil {
+				klog.Errorf("scheduler cache ForgetPod failed: %v", err)
+			}
 			sched.recordSchedulingFailure(prof, assumedPodInfo, fmt.Errorf("Binding rejected: %v", err), SchedulerError, "")
 		} else {
 			// Calculating nodeResourceString can be heavy. Avoid it if klog verbosity is below 2.
@@ -628,7 +604,7 @@ func getAttemptsLabel(p *framework.QueuedPodInfo) string {
 	if p.Attempts >= 15 {
 		return "15+"
 	}
-	return string(p.Attempts)
+	return strconv.Itoa(p.Attempts)
 }
 
 func (sched *Scheduler) profileForPod(pod *v1.Pod) (*profile.Profile, error) {
@@ -661,4 +637,21 @@ func (sched *Scheduler) skipPodSchedule(prof *profile.Profile, pod *v1.Pod) bool
 func defaultAlgorithmSourceProviderName() *string {
 	provider := schedulerapi.SchedulerDefaultProviderName
 	return &provider
+}
+
+// NewInformerFactory creates a SharedInformerFactory and initializes a scheduler specific
+// in-place podInformer.
+func NewInformerFactory(cs clientset.Interface, resyncPeriod time.Duration) informers.SharedInformerFactory {
+	informerFactory := informers.NewSharedInformerFactory(cs, resyncPeriod)
+	informerFactory.InformerFor(&v1.Pod{}, newPodInformer)
+	return informerFactory
+}
+
+// newPodInformer creates a shared index informer that returns only non-terminal pods.
+func newPodInformer(cs clientset.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
+	selector := fields.ParseSelectorOrDie(
+		"status.phase!=" + string(v1.PodSucceeded) +
+			",status.phase!=" + string(v1.PodFailed))
+	lw := cache.NewListWatchFromClient(cs.CoreV1().RESTClient(), string(v1.ResourcePods), metav1.NamespaceAll, selector)
+	return cache.NewSharedIndexInformer(lw, &v1.Pod{}, resyncPeriod, nil)
 }

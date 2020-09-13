@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	cadvisorapi "github.com/google/cadvisor/info/v1"
 	"google.golang.org/grpc"
 	"k8s.io/klog/v2"
 
@@ -40,7 +41,6 @@ import (
 	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager/errors"
-	cputopology "k8s.io/kubernetes/pkg/kubelet/cm/cpumanager/topology"
 	"k8s.io/kubernetes/pkg/kubelet/cm/devicemanager/checkpoint"
 	"k8s.io/kubernetes/pkg/kubelet/cm/topologymanager"
 	"k8s.io/kubernetes/pkg/kubelet/config"
@@ -124,11 +124,11 @@ func (s *sourcesReadyStub) AddSource(source string) {}
 func (s *sourcesReadyStub) AllReady() bool          { return true }
 
 // NewManagerImpl creates a new manager.
-func NewManagerImpl(numaNodeInfo cputopology.NUMANodeInfo, topologyAffinityStore topologymanager.Store) (*ManagerImpl, error) {
-	return newManagerImpl(pluginapi.KubeletSocket, numaNodeInfo, topologyAffinityStore)
+func NewManagerImpl(topology []cadvisorapi.Node, topologyAffinityStore topologymanager.Store) (*ManagerImpl, error) {
+	return newManagerImpl(pluginapi.KubeletSocket, topology, topologyAffinityStore)
 }
 
-func newManagerImpl(socketPath string, numaNodeInfo cputopology.NUMANodeInfo, topologyAffinityStore topologymanager.Store) (*ManagerImpl, error) {
+func newManagerImpl(socketPath string, topology []cadvisorapi.Node, topologyAffinityStore topologymanager.Store) (*ManagerImpl, error) {
 	klog.V(2).Infof("Creating Device Plugin manager at %s", socketPath)
 
 	if socketPath == "" || !filepath.IsAbs(socketPath) {
@@ -136,8 +136,8 @@ func newManagerImpl(socketPath string, numaNodeInfo cputopology.NUMANodeInfo, to
 	}
 
 	var numaNodes []int
-	for node := range numaNodeInfo {
-		numaNodes = append(numaNodes, node)
+	for _, node := range topology {
+		numaNodes = append(numaNodes, node.Id)
 	}
 
 	dir, file := filepath.Split(socketPath)
@@ -709,7 +709,7 @@ func (m *ManagerImpl) devicesToAllocate(podUID, contName, resource string, requi
 		if err != nil {
 			return nil, err
 		}
-		if allocateRemainingFrom(preferred.Intersection(aligned.Union(allocated))) {
+		if allocateRemainingFrom(preferred.Intersection(aligned)) {
 			return allocated, nil
 		}
 		// Then fallback to allocate from the aligned set if no preferred list
@@ -730,11 +730,11 @@ func (m *ManagerImpl) devicesToAllocate(podUID, contName, resource string, requi
 
 	// Then give the plugin the chance to influence the decision on any
 	// remaining devices to allocate.
-	preferred, err := m.callGetPreferredAllocationIfAvailable(podUID, contName, resource, available.Union(devices), devices, required)
+	preferred, err := m.callGetPreferredAllocationIfAvailable(podUID, contName, resource, available.Union(allocated), allocated, required)
 	if err != nil {
 		return nil, err
 	}
-	if allocateRemainingFrom(preferred.Intersection(available.Union(allocated))) {
+	if allocateRemainingFrom(preferred.Intersection(available)) {
 		return allocated, nil
 	}
 
@@ -997,8 +997,10 @@ func (m *ManagerImpl) callGetPreferredAllocationIfAvailable(podUID, contName, re
 	if err != nil {
 		return nil, fmt.Errorf("device plugin GetPreferredAllocation rpc failed with err: %v", err)
 	}
-	// TODO: Add metrics support for init RPC
-	return sets.NewString(resp.ContainerResponses[0].DeviceIDs...), nil
+	if resp != nil && len(resp.ContainerResponses) > 0 {
+		return sets.NewString(resp.ContainerResponses[0].DeviceIDs...), nil
+	}
+	return sets.NewString(), nil
 }
 
 // sanitizeNodeAllocatable scans through allocatedDevices in the device manager

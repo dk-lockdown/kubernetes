@@ -203,6 +203,16 @@ func NodeOSDistroIs(supportedNodeOsDistros ...string) bool {
 	return false
 }
 
+// NodeOSArchIs returns true if the node OS arch is included in the supportedNodeOsArchs. Otherwise false.
+func NodeOSArchIs(supportedNodeOsArchs ...string) bool {
+	for _, arch := range supportedNodeOsArchs {
+		if strings.EqualFold(arch, TestContext.NodeOSArch) {
+			return true
+		}
+	}
+	return false
+}
+
 // DeleteNamespaces deletes all namespaces that match the given delete and skip filters.
 // Filter is by simple strings.Contains; first skip filter, then delete filter.
 // Returns the list of deleted namespaces or an error.
@@ -214,11 +224,9 @@ func DeleteNamespaces(c clientset.Interface, deleteFilter, skipFilter []string) 
 	var wg sync.WaitGroup
 OUTER:
 	for _, item := range nsList.Items {
-		if skipFilter != nil {
-			for _, pattern := range skipFilter {
-				if strings.Contains(item.Name, pattern) {
-					continue OUTER
-				}
+		for _, pattern := range skipFilter {
+			if strings.Contains(item.Name, pattern) {
+				continue OUTER
 			}
 		}
 		if deleteFilter != nil {
@@ -1374,51 +1382,4 @@ retriesLoop:
 		ExpectEqual(totalValidWatchEvents, len(expectedWatchEvents), "Error: there must be an equal amount of total valid watch events (%d) and expected watch events (%d)", totalValidWatchEvents, len(expectedWatchEvents))
 		break retriesLoop
 	}
-}
-
-// WatchUntilWithoutRetry ...
-// reads items from the watch until each provided condition succeeds, and then returns the last watch
-// encountered. The first condition that returns an error terminates the watch (and the event is also returned).
-// If no event has been received, the returned event will be nil.
-// Conditions are satisfied sequentially so as to provide a useful primitive for higher level composition.
-// Waits until context deadline or until context is canceled.
-//
-// the same as watchtools.UntilWithoutRetry, just without the closing of the watch - as for the purpose of being paired with WatchEventSequenceVerifier, the watch is needed for continual watch event collection
-func WatchUntilWithoutRetry(ctx context.Context, watcher watch.Interface, conditions ...watchtools.ConditionFunc) (*watch.Event, error) {
-	ch := watcher.ResultChan()
-	var lastEvent *watch.Event
-	for _, condition := range conditions {
-		// check the next condition against the previous event and short circuit waiting for the next watch
-		if lastEvent != nil {
-			done, err := condition(*lastEvent)
-			if err != nil {
-				return lastEvent, err
-			}
-			if done {
-				continue
-			}
-		}
-	ConditionSucceeded:
-		for {
-			select {
-			case event, ok := <-ch:
-				if !ok {
-					return lastEvent, watchtools.ErrWatchClosed
-				}
-				lastEvent = &event
-
-				done, err := condition(event)
-				if err != nil {
-					return lastEvent, err
-				}
-				if done {
-					break ConditionSucceeded
-				}
-
-			case <-ctx.Done():
-				return lastEvent, wait.ErrWaitTimeout
-			}
-		}
-	}
-	return lastEvent, nil
 }

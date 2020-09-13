@@ -42,9 +42,29 @@ func RegisterQueueSortPlugin(pluginName string, pluginNewFunc runtime.PluginFact
 	return RegisterPluginAsExtensions(pluginName, pluginNewFunc, "QueueSort")
 }
 
+// RegisterPreFilterPlugin returns a function to register a PreFilter Plugin to a given registry.
+func RegisterPreFilterPlugin(pluginName string, pluginNewFunc runtime.PluginFactory) RegisterPluginFunc {
+	return RegisterPluginAsExtensions(pluginName, pluginNewFunc, "PreFilter")
+}
+
 // RegisterFilterPlugin returns a function to register a Filter Plugin to a given registry.
 func RegisterFilterPlugin(pluginName string, pluginNewFunc runtime.PluginFactory) RegisterPluginFunc {
 	return RegisterPluginAsExtensions(pluginName, pluginNewFunc, "Filter")
+}
+
+// RegisterReservePlugin returns a function to register a Reserve Plugin to a given registry.
+func RegisterReservePlugin(pluginName string, pluginNewFunc runtime.PluginFactory) RegisterPluginFunc {
+	return RegisterPluginAsExtensions(pluginName, pluginNewFunc, "Reserve")
+}
+
+// RegisterPermitPlugin returns a function to register a Permit Plugin to a given registry.
+func RegisterPermitPlugin(pluginName string, pluginNewFunc runtime.PluginFactory) RegisterPluginFunc {
+	return RegisterPluginAsExtensions(pluginName, pluginNewFunc, "Permit")
+}
+
+// RegisterPreBindPlugin returns a function to register a PreBind Plugin to a given registry.
+func RegisterPreBindPlugin(pluginName string, pluginNewFunc runtime.PluginFactory) RegisterPluginFunc {
+	return RegisterPluginAsExtensions(pluginName, pluginNewFunc, "PreBind")
 }
 
 // RegisterScorePlugin returns a function to register a Score Plugin to a given registry.

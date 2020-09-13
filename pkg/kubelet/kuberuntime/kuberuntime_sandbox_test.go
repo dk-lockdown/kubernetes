@@ -28,6 +28,7 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+	apitest "k8s.io/cri-api/pkg/apis/testing"
 	"k8s.io/kubernetes/pkg/features"
 	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
 	"k8s.io/kubernetes/pkg/kubelet/runtimeclass"
@@ -67,37 +68,29 @@ func TestGeneratePodSandboxLinuxConfigSeccomp(t *testing.T) {
 		expectedProfile string
 	}{
 		{
-			description:     "no seccomp defined at pod level should return empty",
-			pod:             newSeccompPod(nil, nil, "", ""),
-			expectedProfile: "",
+			description:     "no seccomp defined at pod level should return runtime/default",
+			pod:             newSeccompPod(nil, nil, "", "runtime/default"),
+			expectedProfile: "runtime/default",
 		},
 		{
-			description:     "seccomp field defined at pod level should be honoured",
-			pod:             newSeccompPod(&v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault}, nil, "", ""),
+			description:     "seccomp field defined at pod level should not be honoured",
+			pod:             newSeccompPod(&v1.SeccompProfile{Type: v1.SeccompProfileTypeUnconfined}, nil, "", ""),
 			expectedProfile: "runtime/default",
 		},
 		{
 			description:     "seccomp field defined at container level should not be honoured",
-			pod:             newSeccompPod(nil, &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault}, "", ""),
-			expectedProfile: "",
+			pod:             newSeccompPod(nil, &v1.SeccompProfile{Type: v1.SeccompProfileTypeUnconfined}, "", ""),
+			expectedProfile: "runtime/default",
 		},
 		{
-			description:     "seccomp annotation defined at pod level should be honoured",
-			pod:             newSeccompPod(nil, nil, v1.SeccompProfileRuntimeDefault, ""),
+			description:     "seccomp annotation defined at pod level should not be honoured",
+			pod:             newSeccompPod(nil, nil, "unconfined", ""),
 			expectedProfile: "runtime/default",
 		},
 		{
 			description:     "seccomp annotation defined at container level should not be honoured",
-			pod:             newSeccompPod(nil, nil, "", v1.SeccompProfileRuntimeDefault),
-			expectedProfile: "",
-		},
-		{
-			description: "prioritise pod field over pod annotation",
-			pod: newSeccompPod(&v1.SeccompProfile{
-				Type:             v1.SeccompProfileTypeLocalhost,
-				LocalhostProfile: pointer.StringPtr("pod-field"),
-			}, nil, "localhost/pod-annotation", ""),
-			expectedProfile: "localhost/" + filepath.Join(fakeSeccompProfileRoot, "pod-field"),
+			pod:             newSeccompPod(nil, nil, "", "unconfined"),
+			expectedProfile: "runtime/default",
 		},
 	}
 
@@ -184,4 +177,41 @@ func newSeccompPod(podFieldProfile, containerFieldProfile *v1.SeccompProfile, po
 		}
 	}
 	return pod
+}
+
+// TestDeleteSandbox tests removing the sandbox.
+func TestDeleteSandbox(t *testing.T) {
+	fakeRuntime, _, m, err := createTestRuntimeManager()
+	require.NoError(t, err)
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			UID:       "12345678",
+			Name:      "bar",
+			Namespace: "new",
+		},
+		Spec: v1.PodSpec{
+			Containers: []v1.Container{
+				{
+					Name:            "foo",
+					Image:           "busybox",
+					ImagePullPolicy: v1.PullIfNotPresent,
+				},
+			},
+		},
+	}
+
+	sandbox := makeFakePodSandbox(t, m, sandboxTemplate{
+		pod:       pod,
+		createdAt: fakeCreatedAt,
+		state:     runtimeapi.PodSandboxState_SANDBOX_NOTREADY,
+	})
+	fakeRuntime.SetFakeSandboxes([]*apitest.FakePodSandbox{sandbox})
+
+	err = m.DeleteSandbox(sandbox.Id)
+	assert.NoError(t, err)
+	assert.Contains(t, fakeRuntime.Called, "StopPodSandbox")
+	assert.Contains(t, fakeRuntime.Called, "RemovePodSandbox")
+	containers, err := fakeRuntime.ListPodSandbox(&runtimeapi.PodSandboxFilter{Id: sandbox.Id})
+	assert.NoError(t, err)
+	assert.Empty(t, containers)
 }

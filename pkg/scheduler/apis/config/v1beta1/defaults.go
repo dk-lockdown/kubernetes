@@ -103,18 +103,16 @@ func SetDefaults_KubeSchedulerConfiguration(obj *v1beta1.KubeSchedulerConfigurat
 		}
 	}
 
-	if obj.DisablePreemption == nil {
-		disablePreemption := false
-		obj.DisablePreemption = &disablePreemption
-	}
-
 	if obj.PercentageOfNodesToScore == nil {
 		percentageOfNodesToScore := int32(config.DefaultPercentageOfNodesToScore)
 		obj.PercentageOfNodesToScore = &percentageOfNodesToScore
 	}
 
 	if len(obj.LeaderElection.ResourceLock) == 0 {
-		obj.LeaderElection.ResourceLock = "endpointsleases"
+		// Use lease-based leader election to reduce cost.
+		// We migrated for EndpointsLease lock in 1.17 and starting in 1.20 we
+		// migrated to Lease lock.
+		obj.LeaderElection.ResourceLock = "leases"
 	}
 	if len(obj.LeaderElection.ResourceNamespace) == 0 {
 		obj.LeaderElection.ResourceNamespace = v1beta1.SchedulerDefaultLockObjectNamespace

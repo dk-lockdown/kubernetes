@@ -57,6 +57,7 @@ import (
 	ttlcontroller "k8s.io/kubernetes/pkg/controller/ttl"
 	"k8s.io/kubernetes/pkg/controller/ttlafterfinished"
 	"k8s.io/kubernetes/pkg/controller/volume/attachdetach"
+	"k8s.io/kubernetes/pkg/controller/volume/ephemeral"
 	"k8s.io/kubernetes/pkg/controller/volume/expand"
 	persistentvolumecontroller "k8s.io/kubernetes/pkg/controller/volume/persistentvolume"
 	"k8s.io/kubernetes/pkg/controller/volume/pvcprotection"
@@ -156,13 +157,13 @@ func startNodeIpamController(ctx ControllerContext) (http.Handler, bool, error) 
 	}
 
 	var nodeCIDRMaskSizeIPv4, nodeCIDRMaskSizeIPv6 int
-	if utilfeature.DefaultFeatureGate.Enabled(features.IPv6DualStack) {
+	if dualStack {
 		// only --node-cidr-mask-size-ipv4 and --node-cidr-mask-size-ipv6 supported with dual stack clusters.
 		// --node-cidr-mask-size flag is incompatible with dual stack clusters.
 		nodeCIDRMaskSizeIPv4, nodeCIDRMaskSizeIPv6, err = setNodeCIDRMaskSizesDualStack(ctx.ComponentConfig.NodeIPAMController)
 	} else {
 		// only --node-cidr-mask-size supported with single stack clusters.
-		// --node-cidr-mask-size-ipv4 and --node-cidr-mask-size-ipv6 flags are incompatible with dual stack clusters.
+		// --node-cidr-mask-size-ipv4 and --node-cidr-mask-size-ipv6 flags are incompatible with single stack clusters.
 		nodeCIDRMaskSizeIPv4, nodeCIDRMaskSizeIPv6, err = setNodeCIDRMaskSizes(ctx.ComponentConfig.NodeIPAMController)
 	}
 
@@ -373,6 +374,22 @@ func startVolumeExpandController(ctx ControllerContext) (http.Handler, bool, err
 	return nil, false, nil
 }
 
+func startEphemeralVolumeController(ctx ControllerContext) (http.Handler, bool, error) {
+	if utilfeature.DefaultFeatureGate.Enabled(features.GenericEphemeralVolume) {
+		ephemeralController, err := ephemeral.NewController(
+			ctx.ClientBuilder.ClientOrDie("ephemeral-volume-controller"),
+			ctx.InformerFactory.Core().V1().Pods(),
+			ctx.InformerFactory.Core().V1().PersistentVolumeClaims())
+		if err != nil {
+			return nil, true, fmt.Errorf("failed to start ephemeral volume controller: %v", err)
+		}
+		// TODO (before beta at the latest): make this configurable similar to the EndpointController
+		go ephemeralController.Run(1 /* int(ctx.ComponentConfig.EphemeralController.ConcurrentEphemeralVolumeSyncs) */, ctx.Stop)
+		return nil, true, nil
+	}
+	return nil, false, nil
+}
+
 func startEndpointController(ctx ControllerContext) (http.Handler, bool, error) {
 	go endpointcontroller.NewEndpointController(
 		ctx.InformerFactory.Core().V1().Pods(),
@@ -410,7 +427,7 @@ func startResourceQuotaController(ctx ControllerContext) (http.Handler, bool, er
 	listerFuncForResource := generic.ListerFuncForResourceFunc(ctx.InformerFactory.ForResource)
 	quotaConfiguration := quotainstall.NewQuotaConfigurationForControllers(listerFuncForResource)
 
-	resourceQuotaControllerOptions := &resourcequotacontroller.ResourceQuotaControllerOptions{
+	resourceQuotaControllerOptions := &resourcequotacontroller.ControllerOptions{
 		QuotaClient:               resourceQuotaControllerClient.CoreV1(),
 		ResourceQuotaInformer:     ctx.InformerFactory.Core().V1().ResourceQuotas(),
 		ResyncPeriod:              controller.StaticResyncPeriodFunc(ctx.ComponentConfig.ResourceQuotaController.ResourceQuotaSyncPeriod.Duration),
@@ -427,7 +444,7 @@ func startResourceQuotaController(ctx ControllerContext) (http.Handler, bool, er
 		}
 	}
 
-	resourceQuotaController, err := resourcequotacontroller.NewResourceQuotaController(resourceQuotaControllerOptions)
+	resourceQuotaController, err := resourcequotacontroller.NewController(resourceQuotaControllerOptions)
 	if err != nil {
 		return nil, false, err
 	}
@@ -538,6 +555,7 @@ func startPVCProtectionController(ctx ControllerContext) (http.Handler, bool, er
 		ctx.InformerFactory.Core().V1().PersistentVolumeClaims(),
 		ctx.InformerFactory.Core().V1().Pods(),
 		ctx.ClientBuilder.ClientOrDie("pvc-protection-controller"),
+		utilfeature.DefaultFeatureGate.Enabled(features.StorageObjectInUseProtection),
 		utilfeature.DefaultFeatureGate.Enabled(features.StorageObjectInUseProtection),
 	)
 	if err != nil {
