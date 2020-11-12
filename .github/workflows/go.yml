@@ -23,6 +23,7 @@ jobs:
       env:
         packageName: v1.18.2
       #run: echo "::set-env name=packageName::v1.18.2"
+      run: echo '${{ env.packageName }}'
     
     - name: Get Env
       run: echo '${{ env.packageName }}'
