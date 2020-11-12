@@ -20,9 +20,9 @@ jobs:
       id: go
 
     - name: Dump GitHub context
-      #env:
-      #  KUBEADM_VERSION: v1.18.5
-      run: echo "::set-env name=packageName::v1.18.2"
+      env:
+        packageName: v1.18.2
+      #run: echo "::set-env name=packageName::v1.18.2"
     
     - name: Get Env
       run: echo '${{ env.packageName }}'
