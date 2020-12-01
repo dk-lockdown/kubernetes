@@ -21,7 +21,7 @@ jobs:
 
     - name: Dump GitHub context
       env:
-        packageName: v1.19.1
+        packageName: v1.19.3
       #run: echo "::set-env name=packageName::v1.18.2"
       #run: echo '${{ env.packageName }}'
       run: echo "packageName=${{ env.packageName }}" >> $GITHUB_ENV
