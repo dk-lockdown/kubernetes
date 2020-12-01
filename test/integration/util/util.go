@@ -355,7 +355,7 @@ func InitTestMaster(t *testing.T, nsPrefix string, admission admission.Interface
 // WaitForSchedulerCacheCleanup waits for cleanup of scheduler's cache to complete
 func WaitForSchedulerCacheCleanup(sched *scheduler.Scheduler, t *testing.T) {
 	schedulerCacheIsEmpty := func() (bool, error) {
-		dump := sched.Cache().Dump()
+		dump := sched.SchedulerCache.Dump()
 
 		return len(dump.Nodes) == 0 && len(dump.AssumedPods) == 0, nil
 	}
@@ -373,7 +373,7 @@ func InitTestScheduler(
 	policy *schedulerapi.Policy,
 ) *TestContext {
 	// Pod preemption is enabled by default scheduler configuration.
-	return InitTestSchedulerWithOptions(t, testCtx, policy, time.Second)
+	return InitTestSchedulerWithOptions(t, testCtx, policy)
 }
 
 // InitTestSchedulerWithOptions initializes a test environment and creates a scheduler with default
@@ -382,11 +382,10 @@ func InitTestSchedulerWithOptions(
 	t *testing.T,
 	testCtx *TestContext,
 	policy *schedulerapi.Policy,
-	resyncPeriod time.Duration,
 	opts ...scheduler.Option,
 ) *TestContext {
 	// 1. Create scheduler
-	testCtx.InformerFactory = scheduler.NewInformerFactory(testCtx.ClientSet, resyncPeriod)
+	testCtx.InformerFactory = scheduler.NewInformerFactory(testCtx.ClientSet, 0)
 
 	var err error
 	eventBroadcaster := events.NewBroadcaster(&events.EventSinkImpl{
