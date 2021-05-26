@@ -59,7 +59,7 @@ jobs:
     #  run: git checkout v1.18.2
 
     - name: Build
-      run: KUBE_GIT_TREE_STATE=clean make all WHAT=cmd/kubeadm GOFLAGS=-v
+      run: UBE_BUILD_PLATFORMS=linux/amd64 KUBE_GIT_TREE_STATE=clean make kubeadm GOFLAGS=-v 
 
     - name: Get paGth
       run: find . -name kubeadm
