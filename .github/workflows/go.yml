@@ -52,7 +52,7 @@ jobs:
             curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
             dep ensure
         fi
-        [ -f hack/print-workspace-status.sh ] && hack/print-workspace-status.sh
+        [ -f /home/runner/work/kubernetes/kubernetes/hack/print-workspace-status.sh ] && /home/runner/work/kubernetes/kubernetes/hack/print-workspace-status.sh
     - name: Get workpath
       run: pwd
 
